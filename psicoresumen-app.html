@@ -633,7 +633,6 @@ window.onload = async () => {
   if(session) {
     currentUser = session.user;
     await cargarUsuario();
-    await cargarMateriasSidebar();
     if(currentUsuario?.rol==='admin') {
       cambiarScreen('sc-admin');
       cargarDashboardAdmin();
@@ -715,11 +714,21 @@ async function cargarUsuario() {
   if(!currentUser) return;
   const { data, error } = await sb.from('usuarios').select('*').eq('auth_id', currentUser.id).maybeSingle();
   if(error || !data) {
-    // Intentar por email
     const { data: data2 } = await sb.from('usuarios').select('*').eq('email', currentUser.email).maybeSingle();
     currentUsuario = data2;
   } else {
     currentUsuario = data;
+  }
+  if(!currentUsuario) {
+    // Crear registro si no existe
+    const { data: nuevo } = await sb.from('usuarios').insert({
+      auth_id: currentUser.id,
+      email: currentUser.email,
+      nombre: currentUser.email.split('@')[0],
+      rol: 'estudiante',
+      activo: true
+    }).select().single();
+    currentUsuario = nuevo;
   }
   if(currentUsuario) {
     const nombre = currentUsuario.nombre?.split(' ')[0]||'';
