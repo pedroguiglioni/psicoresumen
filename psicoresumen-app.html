@@ -920,12 +920,19 @@ async function cargarContenidoTab(tab, unidadId, tipo) {
   }
 
   if(tipo==='resumen') {
+    // Buscar si hay archivo PDF para esta unidad
+    const { data: arch } = await sb.from('contenido').select('*').eq('unidad_id',unidadId).eq('tipo','adicional').maybeSingle();
+    const tienePDF = arch?.contenido && arch.contenido.startsWith('unidades/');
     cont.innerHTML=`<div class="unidad-text">${data.contenido.replace(/\n/g,'<br>')}</div>
       <div style="font-size:12px;color:var(--text3);margin-top:12px">⏱️ Tiempo estimado de lectura: ${Math.ceil(data.contenido.split(' ').length/200)} min</div>
-      <div class="download-block">
+      ${tienePDF?`<div class="download-block">
         <div><div class="download-info">📄 Descargar resumen en PDF</div><div class="download-price">$5.000 ARS · Una sola descarga</div></div>
-        <button class="btn gold sm" onclick="abrirDescarga('${data.id}','Unidad — Resumen')">Descargar</button>
-      </div>`;
+        <button class="btn gold sm" onclick="abrirDescarga('${arch.id}','${arch.contenido}')">Descargar</button>
+      </div>`:''}`;
+  } else if(tipo==='adicional') {
+    // No mostrar el path crudo
+    cont.innerHTML='<div class="vacio">Archivo disponible en la pestaña Resumen</div>';
+    return;
   } else if(tipo==='audio') {
     cont.innerHTML=`<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:20px;text-align:center">
       <div style="font-size:32px;margin-bottom:10px">🎧</div>
@@ -988,17 +995,25 @@ function buscar() {
 }
 
 // ══ DESCARGA ══
-function abrirDescarga(contenidoId, nombre) {
-  document.getElementById('desc-archivo-name').textContent = nombre;
+function abrirDescarga(contenidoId, filePath) {
+  document.getElementById('desc-archivo-name').textContent = '📄 ' + filePath.split('/').pop().replace(/^\d+_/,'');
   document.getElementById('modal-descarga').dataset.contenidoId = contenidoId;
+  document.getElementById('modal-descarga').dataset.filePath = filePath;
   document.getElementById('modal-descarga').classList.add('open');
 }
 
 async function pagarDescarga() {
   const contenidoId = document.getElementById('modal-descarga').dataset.contenidoId;
+  const filePath = document.getElementById('modal-descarga').dataset.filePath;
   await sb.from('descargas').insert({usuario_id:currentUsuario?.id,contenido_id:contenidoId,monto:5000,fecha:new Date().toISOString().split('T')[0]});
+  // Generar URL firmada (válida 60 segundos)
+  const { data: signed } = await sb.storage.from('contenido').createSignedUrl(filePath, 60);
   cerrarModales();
-  toast('💙 Redirigiendo a MercadoPago...');
+  if(signed?.signedUrl) {
+    window.open(signed.signedUrl, '_blank');
+  } else {
+    toast('💙 Redirigiendo a MercadoPago...');
+  }
 }
 
 // ══ ADMIN ══
