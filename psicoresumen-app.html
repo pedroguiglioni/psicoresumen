@@ -416,6 +416,13 @@ body.light{--bg:#f4f4f8;--surface:#fff;--surface2:#f0f0f6;--border:#e0e0ec;--tex
       <div class="psc active" id="psc-dashboard">
         <div class="dash-welcome" id="dash-bienvenida">Hola 👋</div>
         <div class="dash-sub">Seguí donde dejaste</div>
+        <div id="banner-suscripcion" style="display:none;background:linear-gradient(135deg,rgba(232,197,71,0.15),rgba(232,197,71,0.05));border:1px solid rgba(232,197,71,0.4);border-radius:16px;padding:20px 24px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:16px">
+          <div>
+            <div style="font-size:15px;font-weight:800;color:var(--gold);margin-bottom:4px">⚠️ Tu suscripción no está activa</div>
+            <div style="font-size:13px;color:var(--text2)">Suscribite para acceder a todo el contenido de la carrera</div>
+          </div>
+          <button class="btn gold" onclick="pagarSuscripcion()" style="white-space:nowrap;flex-shrink:0">💳 Suscribirme — $9.900/mes</button>
+        </div>
         <div class="racha-card">
           <div style="font-size:36px">🔥</div>
           <div><div class="racha-num" id="racha-num">0</div><div style="font-size:13px;color:var(--text2)">días estudiando seguidos</div></div>
@@ -696,9 +703,54 @@ async function registro() {
   if(error){mostrarErr('reg-err',error.message);return;}
 
   if(data.user) {
-    await sb.from('usuarios').insert({auth_id:data.user.id, nombre, email, ano_cursado:ano, rol:'estudiante'});
-    toast('✅ Cuenta creada — Completá el pago para activar el acceso');
-    setTimeout(()=>mostrarLogin(),2000);
+    await sb.from('usuarios').insert({auth_id:data.user.id, nombre, email, ano_cursado:ano, rol:'estudiante', activo:false});
+    // Crear preferencia de pago en MP
+    toast('✅ Cuenta creada — Redirigiendo a MercadoPago...');
+    setTimeout(async()=>{
+      await iniciarPagoSuscripcion(email, nombre);
+    }, 1500);
+  }
+}
+
+async function pagarSuscripcion() {
+  if(!currentUsuario) return;
+  toast('⏳ Conectando con MercadoPago...');
+  await iniciarPagoSuscripcion(currentUsuario.email, currentUsuario.nombre);
+}
+
+async function iniciarPagoSuscripcion(email, nombre) {
+  try {
+    const res = await fetch('https://igggedprbvcvbglkrrgv.supabase.co/functions/v1/crear-preferencia', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({email, nombre, monto:9900})
+    });
+    const data = await res.json();
+    if(data.init_point) {
+      window.location.href = data.init_point;
+    } else {
+      toast('⚠️ Error al conectar con MercadoPago');
+    }
+  } catch(e) {
+    toast('⚠️ Error: '+e.message);
+  }
+}
+
+async function iniciarPagoSuscripcion(email, nombre) {
+  try {
+    const res = await fetch('https://igggedprbvcvbglkrrgv.supabase.co/functions/v1/crear-preferencia', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({email, nombre, monto:9900})
+    });
+    const data = await res.json();
+    if(data.init_point) {
+      window.location.href = data.init_point;
+    } else {
+      toast('⚠️ Error al conectar con MercadoPago');
+    }
+  } catch(e) {
+    toast('⚠️ Error: '+e.message);
   }
 }
 
@@ -772,6 +824,8 @@ async function cargarSuscripcion() {
     status.textContent = '⚠️ Sin suscripción activa';
     status.style.color = 'var(--gold)';
     stSubs.textContent = 'Inactiva';
+    const banner = document.getElementById('banner-suscripcion');
+    if(banner) banner.style.display='flex';
   }
 }
 
