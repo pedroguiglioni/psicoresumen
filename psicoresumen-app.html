@@ -1071,12 +1071,11 @@ async function abrirUnidades(materiaId, nombre) {
 
 async function editarUnidad(unidadId, materiaName, numero) {
   currentUnidadId = unidadId;
+  const modalB = document.getElementById('modal-unidad').querySelector('.modal-b');
   document.getElementById('mu-titulo').textContent = materiaName+' — Unidad '+numero;
   document.getElementById('mu-sub').textContent = 'Editando contenido';
-  document.getElementById('mu-unidad-id').value = unidadId;
 
-  // Restaurar form
-  document.getElementById('modal-unidad').querySelector('.modal-b').innerHTML = `
+  modalB.innerHTML = `
     <input type="hidden" id="mu-unidad-id" value="${unidadId}">
     <label class="inp-label">Resumen</label>
     <textarea class="inp-field" id="mu-resumen" style="min-height:120px;resize:vertical" placeholder="Resumen..."></textarea>
@@ -1093,7 +1092,6 @@ async function editarUnidad(unidadId, materiaName, numero) {
       <input type="checkbox" id="mu-visible" checked style="width:18px;height:18px;cursor:pointer">
     </div>`;
 
-  // Cargar contenido existente
   const { data: contenidos } = await sb.from('contenido').select('*').eq('unidad_id',unidadId);
   (contenidos||[]).forEach(c=>{
     const el = document.getElementById('mu-'+c.tipo);
