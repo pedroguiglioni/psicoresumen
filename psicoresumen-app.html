@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PsicoResumen — Estudiá Psicología UCES Resistencia</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700;800;900&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -175,6 +177,11 @@ body.light{--bg:#f4f4f8;--surface:#fff;--surface2:#f0f0f6;--border:#e0e0ec;--tex
 .unidad-tab.active{color:var(--accent2);background:var(--ac);}
 .unidad-content{padding:20px;}
 .unidad-text{font-size:14px;color:var(--text2);line-height:1.8;}
+.pdf-visor-wrap{position:relative;width:100%;background:#525659;}
+.pdf-visor-wrap canvas{display:block;margin:0 auto;}
+.pdf-nav{display:flex;align-items:center;justify-content:center;gap:12px;padding:10px;background:#323639;color:white;font-size:13px;font-weight:600;}
+.pdf-nav button{background:#525659;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;}
+.pdf-nav button:hover{background:#6a6d70;}
 .download-block{background:var(--goldc);border:1px solid rgba(232,197,71,0.2);border-radius:12px;padding:16px 18px;display:flex;align-items:center;justify-content:space-between;margin-top:14px;}
 .download-info{font-size:13px;font-weight:600;margin-bottom:3px;}
 .download-price{font-size:12px;color:var(--gold);font-weight:700;}
@@ -959,16 +966,60 @@ async function verArchivo(archivoId, storagePath, url) {
     src = data?.signedUrl||'';
   }
   if(!src){visor.innerHTML='<div class="vacio">No se pudo cargar el archivo</div>';return;}
-  const ext = (storagePath||url).split('.').pop().toLowerCase();
-  if(['pdf'].includes(ext)) {
-    visor.innerHTML=`<iframe src="${src}" style="width:100%;height:600px;border:none"></iframe>`;
+  const ext = (storagePath||url).split('.').pop().toLowerCase().split('?')[0];
+  if(ext==='pdf') {
+    visor.innerHTML=`<div class="pdf-visor-wrap">
+      <div class="pdf-nav">
+        <button onclick="pdfPrev('${archivoId}')">◀ Anterior</button>
+        <span id="pdf-info-${archivoId}">Cargando...</span>
+        <button onclick="pdfNext('${archivoId}')">Siguiente ▶</button>
+      </div>
+      <canvas id="pdf-canvas-${archivoId}"></canvas>
+    </div>`;
+    renderPDF(src, archivoId);
   } else if(['jpg','jpeg','png','gif','webp'].includes(ext)) {
     visor.innerHTML=`<img src="${src}" style="width:100%;border-radius:0 0 12px 12px">`;
   } else if(['mp3','wav','ogg','m4a'].includes(ext)) {
     visor.innerHTML=`<div style="padding:20px"><audio controls style="width:100%"><source src="${src}">Tu navegador no soporta audio.</audio></div>`;
   } else {
-    visor.innerHTML=`<div style="padding:20px;text-align:center"><a href="${src}" target="_blank" class="btn primary">Abrir archivo</a></div>`;
+    visor.innerHTML=`<div style="padding:20px;text-align:center;color:var(--text2);font-size:13px">Vista previa no disponible. Descargá el archivo para verlo.</div>`;
   }
+}
+
+const pdfState = {};
+
+async function renderPDF(src, id) {
+  try {
+    const loadingTask = pdfjsLib.getDocument({url:src, withCredentials:false});
+    const pdf = await loadingTask.promise;
+    pdfState[id] = {pdf, page:1, total:pdf.numPages, src};
+    document.getElementById('pdf-info-'+id).textContent = '1 / '+pdf.numPages;
+    await renderPDFPage(id);
+  } catch(e) {
+    document.getElementById('visor-'+id).innerHTML='<div class="vacio">Error al cargar el PDF</div>';
+  }
+}
+
+async function renderPDFPage(id) {
+  const state = pdfState[id];
+  if(!state) return;
+  const page = await state.pdf.getPage(state.page);
+  const canvas = document.getElementById('pdf-canvas-'+id);
+  if(!canvas) return;
+  const container = canvas.parentElement;
+  const scale = (container.offsetWidth - 40) / page.getViewport({scale:1}).width;
+  const viewport = page.getViewport({scale});
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  await page.render({canvasContext:canvas.getContext('2d'), viewport}).promise;
+  document.getElementById('pdf-info-'+id).textContent = state.page+' / '+state.total;
+}
+
+async function pdfPrev(id) {
+  if(pdfState[id]&&pdfState[id].page>1){pdfState[id].page--;await renderPDFPage(id);}
+}
+async function pdfNext(id) {
+  if(pdfState[id]&&pdfState[id].page<pdfState[id].total){pdfState[id].page++;await renderPDFPage(id);}
 }
 async function verificarYVer(archivoId, storagePath, url) {
   const { data } = await sb.from('suscripciones').select('*').eq('usuario_id',currentUsuario?.id).eq('estado','activa').limit(1);
