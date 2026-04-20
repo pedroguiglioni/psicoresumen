@@ -939,7 +939,7 @@ async function cargarContenidoTab(tab, unidadId, tipo) {
           <div style="min-width:0"><div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${nombre}</div><div style="font-size:11px;color:var(--text3)">Archivo ${i+1}</div></div>
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0">
-          <button class="btn primary sm" onclick="verArchivo('${a.id}','${a.storage_path||''}','${a.contenido||''}')">👁 Ver</button>
+          <button class="btn primary sm" onclick="verificarYVer('${a.id}','${a.storage_path||''}','${a.contenido||''}')">👁 Ver</button>
           <button class="btn gold sm" onclick="abrirDescarga('${a.id}','${a.storage_path||a.contenido||''}','${nombre}')">⬇ $5.000</button>
         </div>
       </div>
@@ -955,7 +955,7 @@ async function verArchivo(archivoId, storagePath, url) {
   visor.innerHTML='<div class="loading"><div class="spinner"></div></div>';
   let src = url;
   if(storagePath) {
-    const { data } = await sb.storage.from('contenido').createSignedUrl(storagePath, 3600);
+    const { data } = await sb.storage.from('contenido').createSignedUrl(storagePath, 300);
     src = data?.signedUrl||'';
   }
   if(!src){visor.innerHTML='<div class="vacio">No se pudo cargar el archivo</div>';return;}
@@ -969,6 +969,14 @@ async function verArchivo(archivoId, storagePath, url) {
   } else {
     visor.innerHTML=`<div style="padding:20px;text-align:center"><a href="${src}" target="_blank" class="btn primary">Abrir archivo</a></div>`;
   }
+}
+async function verificarYVer(archivoId, storagePath, url) {
+  const { data } = await sb.from('suscripciones').select('*').eq('usuario_id',currentUsuario?.id).eq('estado','activa').limit(1);
+  if(!data||!data.length) {
+    toast('⚠️ Necesitás una suscripción activa para ver este contenido');
+    return;
+  }
+  verArchivo(archivoId, storagePath, url);
 }
 
 async function marcarEstudiada(unidadId, btn) {
