@@ -601,7 +601,7 @@ body.light{--bg:#f4f4f8;--surface:#fff;--surface2:#f0f0f6;--border:#e0e0ec;--tex
   </div>
   <div class="modal-f">
     <button class="btn ghost" onclick="cerrarModales()">Cancelar</button>
-    <button class="btn primary" onclick="guardarUnidad()" style="flex:1">✅ Guardar cambios</button>
+    <button class="btn primary" onclick="guardarVisibilidadUnidad()" style="flex:1">✅ Guardar</button>
   </div>
 </div>
 </div>
@@ -868,23 +868,32 @@ async function verMateria(materiaId, nombre, anoLabel) {
   const cont = document.getElementById('unidades-container');
   if(!unidadesData.length){cont.innerHTML='<div class="vacio">Sin unidades cargadas aún</div>';return;}
 
+  // Cargar qué tipos tienen contenido por unidad
+  const unidadIds = unidadesData.map(u=>u.id);
+  const { data: todoContenido } = await sb.from('contenido').select('unidad_id,tipo').in('unidad_id',unidadIds).eq('visible',true);
+
   cont.innerHTML = unidadesData.map(u=>{
     const est = progresoList.some(p=>p.unidad_id===u.id&&p.estudiada);
+    const tipos = [...new Set((todoContenido||[]).filter(c=>c.unidad_id===u.id).map(c=>c.tipo))];
+    const tabsHtml = [
+      {key:'resumen',label:'📄 Resumen'},
+      {key:'preguntas',label:'❓ Preguntas'},
+      {key:'audio',label:'🎧 Audio'},
+      {key:'bibliografia',label:'📚 Bibliografía'},
+      {key:'adicional',label:'📎 Adicional'}
+    ].filter(t=>tipos.includes(t.key))
+     .map((t,i)=>`<div class="unidad-tab ${i===0?'active':''}" onclick="cargarContenidoTab(this,'${u.id}','${t.key}')">${t.label}</div>`)
+     .join('');
+    const primerTipo = tipos[0]||'resumen';
     return `<div class="unidad-card ${est?'estudiada':''}">
-      <div class="unidad-header" onclick="toggleUnidad(this)">
+      <div class="unidad-header" onclick="toggleUnidad(this,'${primerTipo}')">
         <div class="unidad-num">${u.numero}</div>
         <div style="flex:1"><div class="unidad-title">Unidad ${u.numero}${u.titulo?' — '+u.titulo:''}</div></div>
         <button class="btn sm ${est?'green-btn':'ghost'}" onclick="event.stopPropagation();marcarEstudiada('${u.id}',this)" style="margin-right:10px">${est?'✓ Estudiada':'Marcar estudiada'}</button>
         <span>▶</span>
       </div>
       <div class="unidad-body" id="ubody-${u.id}">
-        <div class="unidad-tabs">
-          <div class="unidad-tab active" onclick="cargarContenidoTab(this,'${u.id}','resumen')">📄 Resumen</div>
-          <div class="unidad-tab" onclick="cargarContenidoTab(this,'${u.id}','preguntas')">❓ Preguntas</div>
-          <div class="unidad-tab" onclick="cargarContenidoTab(this,'${u.id}','audio')">🎧 Audio</div>
-          <div class="unidad-tab" onclick="cargarContenidoTab(this,'${u.id}','bibliografia')">📚 Bibliografía</div>
-          <div class="unidad-tab" onclick="cargarContenidoTab(this,'${u.id}','adicional')">📎 Adicional</div>
-        </div>
+        ${tabsHtml?`<div class="unidad-tabs">${tabsHtml}</div>`:''}
         <div class="unidad-content" id="ucont-${u.id}"><div class="loading"><div class="spinner"></div></div></div>
       </div>
     </div>`;
@@ -894,14 +903,15 @@ async function verMateria(materiaId, nombre, anoLabel) {
   if(currentUsuario) await sb.from('visitas').insert({usuario_id:currentUsuario.id,materia_id:materiaId});
 }
 
-function toggleUnidad(header) {
+function toggleUnidad(header, primerTipo) {
   const body = header.nextElementSibling;
   const arrow = header.querySelector('span:last-child');
   const isOpen = body.classList.toggle('open');
   arrow.textContent = isOpen?'▼':'▶';
   if(isOpen) {
     const unidadId = body.id.replace('ubody-','');
-    cargarContenidoTab(body.querySelector('.unidad-tab.active'), unidadId, 'resumen');
+    const tabActiva = body.querySelector('.unidad-tab.active');
+    if(tabActiva) cargarContenidoTab(tabActiva, unidadId, primerTipo||'resumen');
   }
 }
 
@@ -912,35 +922,52 @@ async function cargarContenidoTab(tab, unidadId, tipo) {
   const cont = document.getElementById('ucont-'+unidadId);
   cont.innerHTML='<div class="loading"><div class="spinner"></div></div>';
 
-  const { data } = await sb.from('contenido').select('*').eq('unidad_id',unidadId).eq('tipo',tipo).eq('visible',true).single();
+  const { data: archivos } = await sb.from('contenido').select('*').eq('unidad_id',unidadId).eq('tipo',tipo).eq('visible',true).order('orden');
 
-  if(!data||!data.contenido) {
+  if(!archivos||!archivos.length){
     cont.innerHTML='<div class="vacio">Contenido próximamente</div>';
     return;
   }
 
-  if(tipo==='resumen') {
-    // Buscar si hay archivo PDF para esta unidad
-    const { data: arch } = await sb.from('contenido').select('*').eq('unidad_id',unidadId).eq('tipo','adicional').maybeSingle();
-    const tienePDF = arch?.contenido && arch.contenido.startsWith('unidades/');
-    cont.innerHTML=`<div class="unidad-text">${data.contenido.replace(/\n/g,'<br>')}</div>
-      <div style="font-size:12px;color:var(--text3);margin-top:12px">⏱️ Tiempo estimado de lectura: ${Math.ceil(data.contenido.split(' ').length/200)} min</div>
-      ${tienePDF?`<div class="download-block">
-        <div><div class="download-info">📄 Descargar resumen en PDF</div><div class="download-price">$5.000 ARS · Una sola descarga</div></div>
-        <button class="btn gold sm" onclick="abrirDescarga('${arch.id}','${arch.contenido}')">Descargar</button>
-      </div>`:''}`;
-  } else if(tipo==='adicional') {
-    // No mostrar el path crudo
-    cont.innerHTML='<div class="vacio">Archivo disponible en la pestaña Resumen</div>';
-    return;
-  } else if(tipo==='audio') {
-    cont.innerHTML=`<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:20px;text-align:center">
-      <div style="font-size:32px;margin-bottom:10px">🎧</div>
-      <div style="font-size:14px;font-weight:600;margin-bottom:12px">Audio de la unidad</div>
-      <a href="${data.contenido}" target="_blank" class="btn primary">▶ Escuchar audio</a>
+  cont.innerHTML = archivos.map((a,i)=>{
+    const esStorage = a.storage_path;
+    const nombre = a.nombre_archivo || (a.storage_path?.split('/').pop().replace(/^\d+_/,'')) || 'Archivo '+(i+1);
+    return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;overflow:hidden">
+      <div style="padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+          <span style="font-size:20px">${tipo==='audio'?'🎧':tipo==='preguntas'?'❓':tipo==='bibliografia'?'📚':'📄'}</span>
+          <div style="min-width:0"><div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${nombre}</div><div style="font-size:11px;color:var(--text3)">Archivo ${i+1}</div></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-shrink:0">
+          <button class="btn primary sm" onclick="verArchivo('${a.id}','${a.storage_path||''}','${a.contenido||''}')">👁 Ver</button>
+          <button class="btn gold sm" onclick="abrirDescarga('${a.id}','${a.storage_path||a.contenido||''}','${nombre}')">⬇ $5.000</button>
+        </div>
+      </div>
+      <div id="visor-${a.id}" style="display:none;border-top:1px solid var(--border)"></div>
     </div>`;
+  }).join('');
+}
+
+async function verArchivo(archivoId, storagePath, url) {
+  const visor = document.getElementById('visor-'+archivoId);
+  if(visor.style.display==='block'){visor.style.display='none';return;}
+  visor.style.display='block';
+  visor.innerHTML='<div class="loading"><div class="spinner"></div></div>';
+  let src = url;
+  if(storagePath) {
+    const { data } = await sb.storage.from('contenido').createSignedUrl(storagePath, 3600);
+    src = data?.signedUrl||'';
+  }
+  if(!src){visor.innerHTML='<div class="vacio">No se pudo cargar el archivo</div>';return;}
+  const ext = (storagePath||url).split('.').pop().toLowerCase();
+  if(['pdf'].includes(ext)) {
+    visor.innerHTML=`<iframe src="${src}" style="width:100%;height:600px;border:none"></iframe>`;
+  } else if(['jpg','jpeg','png','gif','webp'].includes(ext)) {
+    visor.innerHTML=`<img src="${src}" style="width:100%;border-radius:0 0 12px 12px">`;
+  } else if(['mp3','wav','ogg','m4a'].includes(ext)) {
+    visor.innerHTML=`<div style="padding:20px"><audio controls style="width:100%"><source src="${src}">Tu navegador no soporta audio.</audio></div>`;
   } else {
-    cont.innerHTML=`<div class="unidad-text">${data.contenido.replace(/\n/g,'<br>')}</div>`;
+    visor.innerHTML=`<div style="padding:20px;text-align:center"><a href="${src}" target="_blank" class="btn primary">Abrir archivo</a></div>`;
   }
 }
 
@@ -995,8 +1022,8 @@ function buscar() {
 }
 
 // ══ DESCARGA ══
-function abrirDescarga(contenidoId, filePath) {
-  document.getElementById('desc-archivo-name').textContent = '📄 ' + filePath.split('/').pop().replace(/^\d+_/,'');
+function abrirDescarga(contenidoId, filePath, nombre) {
+  document.getElementById('desc-archivo-name').textContent = '📄 ' + (nombre||filePath.split('/').pop().replace(/^\d+_/,''));
   document.getElementById('modal-descarga').dataset.contenidoId = contenidoId;
   document.getElementById('modal-descarga').dataset.filePath = filePath;
   document.getElementById('modal-descarga').classList.add('open');
@@ -1005,15 +1032,17 @@ function abrirDescarga(contenidoId, filePath) {
 async function pagarDescarga() {
   const contenidoId = document.getElementById('modal-descarga').dataset.contenidoId;
   const filePath = document.getElementById('modal-descarga').dataset.filePath;
-  await sb.from('descargas').insert({usuario_id:currentUsuario?.id,contenido_id:contenidoId,monto:5000,fecha:new Date().toISOString().split('T')[0]});
-  // Generar URL firmada (válida 60 segundos)
-  const { data: signed } = await sb.storage.from('contenido').createSignedUrl(filePath, 60);
+  const nombre = document.getElementById('desc-archivo-name').textContent.replace('📄 ','');
+  await sb.from('descargas').insert({
+    usuario_id:currentUsuario?.id,
+    contenido_id:contenidoId,
+    monto:5000,
+    fecha:new Date().toISOString().split('T')[0],
+    storage_path:filePath,
+    archivo_nombre:nombre
+  });
   cerrarModales();
-  if(signed?.signedUrl) {
-    window.open(signed.signedUrl, '_blank');
-  } else {
-    toast('💙 Redirigiendo a MercadoPago...');
-  }
+  toast('💙 Procesando pago... (MercadoPago próximamente)');
 }
 
 // ══ ADMIN ══
@@ -1090,37 +1119,114 @@ async function editarUnidad(unidadId, materiaName, numero) {
   document.getElementById('mu-titulo').textContent = materiaName+' — Unidad '+numero;
   document.getElementById('mu-sub').textContent = 'Editando contenido';
 
-  modalB.innerHTML = `
-    <input type="hidden" id="mu-unidad-id" value="${unidadId}">
-    <label class="inp-label">Resumen</label>
-    <textarea class="inp-field" id="mu-resumen" style="min-height:120px;resize:vertical" placeholder="Resumen..."></textarea>
-    <label class="inp-label">Preguntas de parcial</label>
-    <textarea class="inp-field" id="mu-preguntas" style="min-height:80px;resize:vertical" placeholder="1. ¿...?"></textarea>
-    <label class="inp-label">Link de audio</label>
-    <input class="inp-field" id="mu-audio" placeholder="https://...">
-    <label class="inp-label">Bibliografía</label>
-    <input class="inp-field" id="mu-biblio" placeholder="Autor, Título, Año...">
-    <label class="inp-label">📎 Archivo descargable (PDF)</label>
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
-      <input class="inp-field" id="mu-adicional" placeholder="URL del archivo..." style="margin:0;flex:1">
-      <label style="background:var(--accent);color:white;padding:9px 14px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0">
-        📤 Subir PDF
-        <input type="file" accept=".pdf" style="display:none" onchange="subirPDF(this,'${unidadId}')">
-      </label>
-    </div>
-    <div id="upload-status-${unidadId}" style="font-size:12px;color:var(--green);margin-bottom:8px;display:none"></div>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">
-      <label class="inp-label" style="margin:0">Visible</label>
+  const tipos = [
+    {key:'resumen', label:'📄 Resúmenes', icon:'📄'},
+    {key:'preguntas', label:'❓ Preguntas de parcial', icon:'❓'},
+    {key:'audio', label:'🎧 Audios', icon:'🎧'},
+    {key:'bibliografia', label:'📚 Bibliografía', icon:'📚'},
+    {key:'adicional', label:'📎 Adicional', icon:'📎'}
+  ];
+
+  const { data: contenidos } = await sb.from('contenido').select('*').eq('unidad_id',unidadId).order('tipo').order('orden');
+
+  modalB.innerHTML = `<input type="hidden" id="mu-unidad-id" value="${unidadId}">` +
+    tipos.map(t=>{
+      const archivos = (contenidos||[]).filter(c=>c.tipo===t.key);
+      return `<div style="border:1px solid var(--border);border-radius:12px;margin-bottom:16px;overflow:hidden">
+        <div style="padding:12px 16px;background:var(--surface2);font-size:13px;font-weight:700;display:flex;justify-content:space-between;align-items:center">
+          <span>${t.label}</span>
+          <span style="font-size:11px;color:var(--text3)">${archivos.length} archivo(s)</span>
+        </div>
+        <div style="padding:12px 16px">
+          ${archivos.map((a,i)=>`
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+              <span style="font-size:11px;color:var(--text3);flex-shrink:0">#${i+1}</span>
+              <span style="font-size:12px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.nombre_archivo||a.storage_path?.split('/').pop()||a.contenido?.substring(0,40)||'—'}</span>
+              <span class="badge ${a.visible?'activo':'oculto'}" style="flex-shrink:0">${a.visible?'Visible':'Oculto'}</span>
+              <button class="btn ghost sm" onclick="toggleVisibilidadArchivo('${a.id}',${a.visible})" style="flex-shrink:0">${a.visible?'Ocultar':'Mostrar'}</button>
+            </div>`).join('')}
+          <div style="margin-top:12px">
+            <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:8px">AGREGAR NUEVO</div>
+            <div style="display:flex;gap:8px;margin-bottom:8px">
+              <input class="inp-field" id="url-${t.key}" placeholder="Pegar URL..." style="margin:0;flex:1;font-size:12px">
+              <button class="btn ghost sm" onclick="agregarContenidoUrl('${unidadId}','${t.key}')">+ URL</button>
+            </div>
+            <label style="display:flex;align-items:center;gap:8px;background:var(--ac);border:1px dashed var(--accent);border-radius:8px;padding:10px 14px;cursor:pointer;font-size:12px;font-weight:600;color:var(--accent2)">
+              📤 Subir archivo desde PC/celular
+              <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.mp3,.wav,.m4a" style="display:none" onchange="subirArchivo(this,'${unidadId}','${t.key}')">
+            </label>
+            <div id="upload-status-${unidadId}-${t.key}" style="font-size:12px;margin-top:6px;display:none"></div>
+          </div>
+        </div>
+      </div>`;
+    }).join('') +
+    `<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0">
+      <label class="inp-label" style="margin:0">Unidad visible</label>
       <input type="checkbox" id="mu-visible" checked style="width:18px;height:18px;cursor:pointer">
     </div>`;
 
-  const { data: contenidos } = await sb.from('contenido').select('*').eq('unidad_id',unidadId);
-  (contenidos||[]).forEach(c=>{
-    const el = document.getElementById('mu-'+c.tipo);
-    if(el) el.value = c.contenido||'';
-  });
+  const unidadData = await sb.from('unidades').select('visible').eq('id',unidadId).single();
+  if(unidadData.data) document.getElementById('mu-visible').checked = unidadData.data.visible;
 }
 
+async function toggleVisibilidadArchivo(id, actual) {
+  await sb.from('contenido').update({visible:!actual}).eq('id',id);
+  toast('✅ Visibilidad actualizada');
+  // Recargar el modal
+  const unidadId = document.getElementById('mu-unidad-id').value;
+  const titulo = document.getElementById('mu-titulo').textContent;
+  const partes = titulo.split(' — Unidad ');
+  editarUnidad(unidadId, partes[0], partes[1]);
+}
+
+async function agregarContenidoUrl(unidadId, tipo) {
+  const input = document.getElementById('url-'+tipo);
+  const url = input.value.trim();
+  if(!url){toast('⚠️ Pegá una URL primero');return;}
+  const { data: existentes } = await sb.from('contenido').select('orden').eq('unidad_id',unidadId).eq('tipo',tipo).order('orden',{ascending:false}).limit(1);
+  const orden = (existentes?.[0]?.orden||0)+1;
+  await sb.from('contenido').insert({unidad_id:unidadId, tipo, contenido:url, visible:true, orden});
+  input.value='';
+  toast('✅ URL agregada');
+  const titulo = document.getElementById('mu-titulo').textContent;
+  const partes = titulo.split(' — Unidad ');
+  editarUnidad(unidadId, partes[0], partes[1]);
+}
+
+async function subirArchivo(input, unidadId, tipo) {
+  const file = input.files[0];
+  if(!file) return;
+  const statusEl = document.getElementById('upload-status-'+unidadId+'-'+tipo);
+  statusEl.style.display='block';
+  statusEl.style.color='var(--text2)';
+  statusEl.textContent='⏳ Subiendo '+file.name+'...';
+  const { data: existentes } = await sb.from('contenido').select('orden').eq('unidad_id',unidadId).eq('tipo',tipo).order('orden',{ascending:false}).limit(1);
+  const orden = (existentes?.[0]?.orden||0)+1;
+  const path = `unidades/${unidadId}/${tipo}/${Date.now()}_${file.name}`;
+  const { error } = await sb.storage.from('contenido').upload(path, file, {upsert:false});
+  if(error){
+    statusEl.style.color='var(--red)';
+    statusEl.textContent='❌ Error: '+error.message;
+    return;
+  }
+  await sb.from('contenido').insert({unidad_id:unidadId, tipo, storage_path:path, nombre_archivo:file.name, contenido:'', visible:true, orden});
+  statusEl.style.color='var(--green)';
+  statusEl.textContent='✅ '+file.name+' subido correctamente';
+  setTimeout(()=>{
+    const titulo = document.getElementById('mu-titulo').textContent;
+    const partes = titulo.split(' — Unidad ');
+    editarUnidad(unidadId, partes[0], partes[1]);
+  }, 1500);
+}
+async function guardarVisibilidadUnidad() {
+  const unidadId = document.getElementById('mu-unidad-id')?.value;
+  if(!unidadId) return;
+  const visible = document.getElementById('mu-visible')?.checked??true;
+  await sb.from('unidades').update({visible}).eq('id',unidadId);
+  cerrarModales();
+  toast('✅ Guardado');
+}
+  
 async function subirPDF(input, unidadId) {
   const file = input.files[0];
   if(!file) return;
@@ -1141,23 +1247,6 @@ async function subirPDF(input, unidadId) {
   status.textContent='✅ Archivo subido: '+file.name;
 }
 
-async function guardarUnidad() {
-  const unidadId = document.getElementById('mu-unidad-id')?.value;
-  if(!unidadId){toast('⚠️ Error al guardar');return;}
-  const tipos = ['resumen','preguntas','audio','bibliografia','adicional'];
-  const ids=['mu-resumen','mu-preguntas','mu-audio','mu-biblio','mu-adicional'];
-  for(let i=0;i<tipos.length;i++){
-    const el=document.getElementById(ids[i]);
-    if(!el) continue;
-    const val=el.value.trim();
-    const {data:existe}=await sb.from('contenido').select('id').eq('unidad_id',unidadId).eq('tipo',tipos[i]).single();
-    if(existe) await sb.from('contenido').update({contenido:val,updated_at:new Date().toISOString()}).eq('id',existe.id);
-    else if(val) await sb.from('contenido').insert({unidad_id:unidadId,tipo:tipos[i],contenido:val});
-  }
-  const visible=document.getElementById('mu-visible')?.checked??true;
-  await sb.from('unidades').update({visible}).eq('id',unidadId);
-  cerrarModales(); toast('✅ Contenido guardado correctamente');
-}
 
 async function cargarUsuariosAdmin() {
   const { data } = await sb.from('usuarios').select('*').order('created_at',{ascending:false});
